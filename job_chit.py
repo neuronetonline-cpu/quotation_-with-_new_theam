@@ -5,6 +5,11 @@ import sys
 import subprocess
 import tkinter as tk
 from tkinter import ttk, messagebox
+
+try:
+    import win32print
+except Exception:
+    win32print = None
 from datetime import datetime
 from xml.sax.saxutils import escape
 from ui_theme import add_window_header, apply_ui_theme, COLORS
@@ -359,13 +364,94 @@ def open_job_chit(app, db, get_pdf_dir, job_id=None):
                 else: subprocess.Popen(['xdg-open',path])
             except OSError: pass
     def print_click():
-        path=make_pdf()
-        if not path: return
+        path = make_pdf()
+        if not path:
+            return
         if not sys.platform.startswith('win'):
-            messagebox.showinfo('Print',f'Open the PDF and print it:\n{path}',parent=win); return
-        if messagebox.askyesno('Print Job Sheet','Send the job sheet to your DEFAULT Windows printer?',parent=win):
-            try: os.startfile(path,'print')
-            except OSError as e: messagebox.showerror('Printer',f'Printing failed: {e}\nPDF saved at {path}',parent=win)
+            messagebox.showinfo('Print', f'Open the PDF and print it:\n{path}', parent=win)
+            return
+        if not win32print:
+            messagebox.showerror('Printer',
+                                 'pywin32 / win32print is not available.\n'
+                                 f'PDF saved at {path}', parent=win)
+            return
+        if not messagebox.askyesno('Print Job Sheet',
+                                   'Send the job sheet to your DEFAULT Windows printer?',
+                                   parent=win):
+            return
+        try:
+            printer_name = win32print.GetDefaultPrinter()
+            # Send the PDF-independent workshop text directly to the Windows
+            # printer. This avoids os.startfile(path, "print"), which fails
+            # with WinError 1155 when no PDF application's Print shell verb
+            # is registered. It also works correctly with dot-matrix printers.
+            lines = []
+            def add_line(text=''):
+                lines.append(str(text)[:80])
+
+            ESC = '\x1b'
+            add_line(ESC + '@')
+            add_line(ESC + 'E' + '\x01' + ESC + 'W' + '\x01' + ESC + 'w' + '\x01')
+            add_line('BLUETECH COMPUTERS')
+            add_line(ESC + 'w' + '\x00' + ESC + 'W' + '\x00' + ESC + 'E' + '\x00')
+            add_line('PC BUILD JOB SHEET')
+            add_line('=' * 80)
+            add_line(f'JOB NO        : {number}')
+            add_line(f'QUOTATION NO  : {qno}')
+            add_line(f'CUSTOMER      : {customer}')
+            add_line(f'PHONE         : {phone}')
+            add_line(f'CREATED       : {created}')
+            add_line(f'DUE DATE      : {due_var.get() or "-"}')
+            add_line(f'STATUS        : {status_var.get()}')
+            add_line('-' * 80)
+            add_line(f'{"#":<4}{"PRODUCT":<28}{"DESCRIPTION":<38}{"QTY":>6}')
+            add_line('-' * 80)
+            for i, (prod, desc, qty) in enumerate(current_items(), 1):
+                desc = str(desc or '-')
+                prod = str(prod or 'CUSTOM ITEM')
+                qty_text = str(int(qty)) if isinstance(qty, (int, float)) and float(qty).is_integer() else str(qty)
+                add_line(f'{i:<4}{prod[:28]:<28}{desc[:38]:<38}{qty_text:>6}')
+            add_line('-' * 80)
+            add_line('STAFF / RESPONSIBILITY')
+            for stage in STAGES:
+                add_line(f'{stage:<20}: {staff_vars[stage].get() or "-"}  {time_vars[stage].get() or "-"}')
+            add_line('-' * 80)
+            add_line('BUILD / FINAL CHECKLIST')
+            for item in CHECKS:
+                mark = 'X' if check_vars[item].get() else ' '
+                add_line(f'[{mark}] {item}')
+            add_line('-' * 80)
+            add_line('WORKSHOP REMARKS / SERIAL NUMBERS')
+            remarks_text = remarks.get('1.0', 'end-1c').strip()
+            for part in remarks_text.splitlines() or ['']:
+                add_line(part)
+            add_line('')
+            add_line('WORKSHOP SIGNATURE: ____________________')
+            add_line('FINAL APPROVAL   : ____________________')
+            add_line('')
+            add_line(ESC + 'd' + '\x04')
+            data = '\r\n'.join(lines) + '\r\n\f'
+
+            h = win32print.OpenPrinter(printer_name)
+            try:
+                win32print.StartDocPrinter(h, 1, (f'Job Sheet {number}', None, 'RAW'))
+                try:
+                    win32print.StartPagePrinter(h)
+                    try:
+                        win32print.WritePrinter(h, data.encode('cp437', errors='replace'))
+                    finally:
+                        win32print.EndPagePrinter(h)
+                finally:
+                    win32print.EndDocPrinter(h)
+            finally:
+                win32print.ClosePrinter(h)
+
+            messagebox.showinfo('Printer',
+                                f'Job Sheet sent to: {printer_name}', parent=win)
+        except Exception as e:
+            messagebox.showerror('Printer',
+                                 f'Printing failed: {e}\nPDF saved at {path}',
+                                 parent=win)
     def close_window():
         try: win.grab_release()
         except tk.TclError: pass
