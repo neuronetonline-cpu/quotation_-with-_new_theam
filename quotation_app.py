@@ -647,21 +647,24 @@ class App:
             widget = self.root.winfo_containing(x, y)
             if widget is None:
                 return
+
+            # page_content is the widget embedded inside page_canvas. It is
+            # therefore not a descendant of page_canvas in Tk's widget tree.
+            # Check for page_content (or its children) instead.
             w = widget
             inside_page = False
             while w is not None:
-                if w == self.page_canvas:
+                if w == self.page_content:
                     inside_page = True
                     break
                 try:
                     w = w.master
                 except Exception:
                     break
+
             if not inside_page:
                 return
 
-            # Windows mouse-wheel: positive delta = UP, negative delta = DOWN.
-            # Use the sign directly so both directions work reliably.
             delta = getattr(event, "delta", 0)
             if delta:
                 units = -max(1, int(abs(delta) / 120)) if delta > 0 else max(1, int(abs(delta) / 120))
@@ -800,6 +803,9 @@ class App:
             "1" if self.show_predeposit_cod.get() else "0"
         )
         self.update_predeposit_toggle()
+        # Recalculate immediately after switching ON/OFF so the quotation
+        # amount is available to the PDF/quotation output without another edit.
+        self.recalc()
 
     def update_predeposit_toggle(self):
         if not hasattr(self, "predeposit_toggle"):
